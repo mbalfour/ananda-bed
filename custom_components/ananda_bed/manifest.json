@@ -3,7 +3,7 @@
   "name": "Ananda Bed",
   "codeowners": ["@mbalfour"],
   "config_flow": true,
-  "documentation": "https://github.com/mbalfour/ananda_bed",
+  "documentation": "https://github.com/mbalfour/ananda-bed",
   "iot_class": "local_polling",
   "version": "1.0.0"
 }
