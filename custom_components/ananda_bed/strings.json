@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Ananda Bed",
+        "description": "Configure your Ananda adjustable bed base.",
+        "data": {
+          "name": "Name",
+          "mac_address": "MAC Address (hex, e.g. 010203040506)",
+          "product_access_key": "Product Access Key (hex, default works for all Ananda beds)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Invalid MAC address format (must be hex)"
+    },
+    "abort": {
+      "already_configured": "This bed is already configured"
+    }
+  }
+}
