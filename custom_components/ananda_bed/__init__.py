@@ -19,6 +19,7 @@ import logging
 import pathlib
 
 from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -50,7 +51,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     5. Forwards setup to each platform (cover, button, select)
     """
     # Register the custom Lovelace card JS (idempotent; safe to call multiple times).
-    hass.http.register_static_path(CARD_JS_URL, CARD_JS_PATH, cache_headers=False)
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_JS_URL, CARD_JS_PATH, False)]
+    )
     add_extra_js_url(hass, CARD_JS_URL)
 
     coordinator = AnandaBedCoordinator(hass, entry.data)
