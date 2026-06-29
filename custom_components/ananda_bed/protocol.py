@@ -475,6 +475,7 @@ async def run_motor_command(
 async def run_motor_to_position(
     mac: bytes, auth_token: bytes, motor_byte: int,
     target_pos: int, is_head: bool, timeout: float = 60.0,
+    on_progress=None, cancel_event=None,
 ) -> dict | None:
     """Run a motor until the target position (0-100%) is reached or timeout.
 
@@ -499,6 +500,10 @@ async def run_motor_to_position(
         end_time = asyncio.get_event_loop().time() + timeout
         last_status = None
         while asyncio.get_event_loop().time() < end_time:
+            # Check if movement was cancelled (stop button or new movement)
+            if cancel_event and cancel_event.is_set():
+                await session.send_command(0, 0, 0, 0)
+                return last_status
             # Send motor command at 4Hz to keep motor running
             await session.send_command_no_wait(motor=motor_byte)
             await asyncio.sleep(COMMAND_RATE)
@@ -510,6 +515,8 @@ async def run_motor_to_position(
                     status = _parse_status(data)
                     if status:
                         last_status = status
+                        if on_progress:
+                            on_progress(status)
                         pos = status["head_position"] if is_head else status["feet_position"]
                         max_val = HEAD_MAX if is_head else FEET_MAX
                         # Convert target percentage to encoder ticks and check tolerance

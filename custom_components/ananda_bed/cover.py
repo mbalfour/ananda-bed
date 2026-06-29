@@ -108,6 +108,16 @@ class AnandaBedCover(CoordinatorEntity, CoverEntity):
         self._attr_name = f"{entry.title} {section.title()}"
         self._attr_unique_id = f"{entry.entry_id}_{section}"
         self._moving = False  # Track if we're currently commanding movement
+        self._target_position = None  # Target % during movement
+        self._cancel_event = None  # asyncio.Event to signal movement cancellation
+
+    @property
+    def extra_state_attributes(self):
+        """Expose target position so the UI card can show it during movement."""
+        attrs = {}
+        if self._target_position is not None:
+            attrs["target_position"] = self._target_position
+        return attrs
 
     @property
     def current_cover_position(self) -> int | None:
@@ -150,10 +160,15 @@ class AnandaBedCover(CoordinatorEntity, CoverEntity):
     async def async_stop_cover(self, **kwargs) -> None:
         """Stop motor movement immediately.
 
-        Sends a noop/stop command (all zeros) which halts any running motor.
-        Then triggers a coordinator refresh to update position state.
+        Signals any in-progress movement to cancel, then sends a stop command
+        to the bed and refreshes state.
         """
+        # Signal the movement loop to stop
+        if self._cancel_event:
+            self._cancel_event.set()
         self._moving = False
+        self._target_position = None
+        self.async_write_ha_state()
         await send_command_and_get_status(
             self.coordinator.mac, self.coordinator.auth_token,
         )
@@ -173,6 +188,10 @@ class AnandaBedCover(CoordinatorEntity, CoverEntity):
         position = kwargs["position"]
         is_head = self._section == "head"
 
+        # Cancel any in-progress movement first
+        if self._cancel_event:
+            self._cancel_event.set()
+
         # Select the correct motor command byte based on direction
         motor_up = MOTOR_HEAD_UP if is_head else MOTOR_FEET_UP
         motor_down = MOTOR_HEAD_DOWN if is_head else MOTOR_FEET_DOWN
@@ -185,17 +204,30 @@ class AnandaBedCover(CoordinatorEntity, CoverEntity):
         if position == current:
             return
 
+        # Create a new cancel event for this movement
+        import asyncio
+        self._cancel_event = asyncio.Event()
+
         # Mark as moving and notify HA to update the UI (shows moving state)
         self._moving = True
+        self._target_position = position
         self.async_write_ha_state()
 
         # Closed-loop movement: sends motor command at 4Hz while monitoring
-        # position, stops within 1% of target or after 60s timeout
+        # position, stops within 1% of target or after 60s timeout.
+        # The on_progress callback updates coordinator data in real-time
+        # so the UI shows intermediate positions during movement.
+        def _on_progress(status):
+            self.coordinator.async_set_updated_data(status)
+
         await run_motor_to_position(
             self.coordinator.mac, self.coordinator.auth_token,
             motor_byte, position, is_head,
+            on_progress=_on_progress,
+            cancel_event=self._cancel_event,
         )
 
         # Movement complete -- update state and refresh coordinator
         self._moving = False
+        self._target_position = None
         await self.coordinator.async_request_refresh()

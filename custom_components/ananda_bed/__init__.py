@@ -30,8 +30,9 @@ _LOGGER = logging.getLogger(__name__)
 
 # Path to the frontend card JS file.
 FRONTEND_DIR = pathlib.Path(__file__).parent / "frontend"
-CARD_JS_PATH = str(FRONTEND_DIR / "ananda-bed-card.js")
-CARD_JS_URL = f"/{DOMAIN}/ananda-bed-card.js"
+CARD_URL_BASE = f"/{DOMAIN}_frontend"
+CARD_JS_FILENAME = "ananda-bed-card.js"
+CARD_JS_URL = f"{CARD_URL_BASE}/{CARD_JS_FILENAME}"
 
 # Platforms that this integration provides entities for.
 # Each platform module (cover.py, button.py, select.py) has its own
@@ -50,11 +51,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     4. Stores the coordinator in hass.data for platform entities to access
     5. Forwards setup to each platform (cover, button, select)
     """
-    # Register the custom Lovelace card JS (idempotent; safe to call multiple times).
-    await hass.http.async_register_static_paths(
-        [StaticPathConfig(CARD_JS_URL, CARD_JS_PATH, False)]
-    )
-    add_extra_js_url(hass, CARD_JS_URL)
+    # Register the custom Lovelace card JS (only once, even with multiple bed entries).
+    if f"{DOMAIN}_frontend_registered" not in hass.data:
+        hass.data[f"{DOMAIN}_frontend_registered"] = True
+        try:
+            await hass.http.async_register_static_paths(
+                [StaticPathConfig(CARD_URL_BASE, str(FRONTEND_DIR), False)]
+            )
+            add_extra_js_url(hass, CARD_JS_URL)
+            _LOGGER.info("Registered Ananda Bed card at %s", CARD_JS_URL)
+        except Exception as err:
+            _LOGGER.error("Failed to register Ananda Bed card: %s", err)
 
     coordinator = AnandaBedCoordinator(hass, entry.data)
     # First refresh populates coordinator.data with current bed status.

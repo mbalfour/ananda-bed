@@ -41,6 +41,8 @@ The cycling order is always: off → low → medium → high regardless of the
 numeric gaps in the encoding.
 """
 
+import asyncio
+
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -48,6 +50,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    COMMAND_RATE,
     DOMAIN,
     PRESET_VIB_FEET,
     PRESET_VIB_HEAD,
@@ -56,7 +59,8 @@ from .const import (
     VIB_OPTIONS,
 )
 from .coordinator import AnandaBedCoordinator
-from .protocol import send_command_and_get_status
+from .protocol import AnandaUDPSession
+from .protocol import send_command_and_get_status, AnandaUDPSession
 
 
 async def async_setup_entry(
@@ -141,12 +145,26 @@ class AnandaVibrationSelect(CoordinatorEntity, SelectEntity):
         target_idx = order.index(option) if option in order else 0
         cycles = (target_idx - current_idx) % 4
 
-        # Send one vibration command per cycle step needed
+        # Send one vibration command per cycle step needed.
+        # Each cycle step requires a burst of commands (like holding the button)
+        # to register as a single toggle. We send multiple packets per session.
         for _ in range(cycles):
-            await send_command_and_get_status(
-                self.coordinator.mac, self.coordinator.auth_token,
-                preset=self._preset_byte,
-            )
+            session = AnandaUDPSession(self.coordinator.mac, self.coordinator.auth_token)
+            try:
+                if not await session.connect():
+                    break
+                # Send a burst of commands (mimics holding the button briefly)
+                for _ in range(6):
+                    await session.send_command_no_wait(preset=self._preset_byte)
+                    await asyncio.sleep(COMMAND_RATE)
+                # Get status after the burst to update UI with new vibration state
+                status = await session.get_status()
+                if status:
+                    self.coordinator.async_set_updated_data(status)
+                # Brief pause between cycles for the bed to register the state change
+                await asyncio.sleep(0.3)
+            finally:
+                session.close()
 
         # Refresh coordinator to update displayed state
         await self.coordinator.async_request_refresh()

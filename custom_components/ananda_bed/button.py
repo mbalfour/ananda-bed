@@ -111,11 +111,46 @@ class AnandaPresetButton(ButtonEntity):
         self._attr_unique_id = f"{entry.entry_id}_{key}"
 
     async def async_press(self) -> None:
-        """Handle button press: send preset command and refresh state."""
-        await send_command_and_get_status(
-            self._coordinator.mac, self._coordinator.auth_token, **self._cmd_kwargs,
-        )
-        await self._coordinator.async_request_refresh()
+        """Handle button press: send preset command and poll until position stabilizes."""
+        import asyncio
+        from .protocol import AnandaUDPSession
+
+        session = AnandaUDPSession(self._coordinator.mac, self._coordinator.auth_token)
+        try:
+            if not await session.connect():
+                return
+
+            # Send preset command repeatedly while monitoring position
+            stable_count = 0
+            last_status = None
+            end_time = asyncio.get_event_loop().time() + 30  # 30s timeout
+
+            while asyncio.get_event_loop().time() < end_time:
+                await session.send_command_no_wait(**self._cmd_kwargs)
+                await asyncio.sleep(0.25)
+
+                # Check status responses for position updates
+                if session._protocol:
+                    from .protocol import _parse_status
+                    packets = session._protocol.drain()
+                    for data, _ in packets:
+                        status = _parse_status(data)
+                        if status:
+                            self._coordinator.async_set_updated_data(status)
+                            if last_status and status == last_status:
+                                stable_count += 1
+                                if stable_count >= 8:
+                                    # Position stabilized -- stop sending
+                                    await session.send_command(0, 0, 0, 0)
+                                    return
+                            else:
+                                stable_count = 0
+                            last_status = status
+
+            # Timeout -- stop
+            await session.send_command(0, 0, 0, 0)
+        finally:
+            session.close()
 
 
 class AnandaPillowButton(ButtonEntity):
@@ -141,6 +176,6 @@ class AnandaPillowButton(ButtonEntity):
         """Handle button press: run pillow motor for 1 second, then stop."""
         await run_motor_command(
             self._coordinator.mac, self._coordinator.auth_token,
-            self._motor_byte, duration_sec=1.0,
+            self._motor_byte, duration_sec=3.0,
         )
         await self._coordinator.async_request_refresh()
